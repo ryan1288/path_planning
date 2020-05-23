@@ -110,10 +110,6 @@ int main() {
             car_s = end_path_s;
           }
           
-          // bool too_close_ahead = false;
-          // bool free_left = true;
-          // bool free_right = true;
-          
           // Initialize left/right velocities to the maximum reference, 
           // which will be lowered if a car is detected in the nearby lane
           double left_vel = 49.5;
