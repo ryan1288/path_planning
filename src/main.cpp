@@ -101,12 +101,7 @@ int main() {
           //   of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
 
-          json msgJson;
-
-          // Finite State Machine:
-          // State 0 - Accelerating up to top reference speed with no car in front
-          // State 1 - Matching the speed of the car in front (minus 1m/s) to keep distance
-          // State 2 - Preparing + Lane Switching
+          json msgJson;         
 
           int prev_size = previous_path_x.size();
           
@@ -114,6 +109,10 @@ int main() {
           {
             car_s = end_path_s;
           }
+          
+          // bool too_close_ahead = false;
+          // bool free_left = true;
+          // bool free_right = true;
           
           // Initialize left/right velocities to the maximum reference, 
           // which will be lowered if a car is detected in the nearby lane
@@ -127,75 +126,73 @@ int main() {
           // Set up variables to detect and slow down the car
           bool in_front = false;
           double front_vel = 49.5;
-          
-          // Find ref_v to use
+
+          // Iterate through and use sensor fusion data
           for (int i = 0; i < sensor_fusion.size(); i++)
           {
-            // Distance perpendicular to the lane
+            // Other's car is in my lane
             float d = sensor_fusion[i][6];
             
             // Calculate the speed of the detected car
-            double vx = sensor_fusion[i][3];
-            double vy = sensor_fusion[i][4];
-            double check_speed = sqrt(pow(vx, 2) + pow(vy, 2));
-            double check_car_s = sensor_fusion[i][5];
+            float vx = sensor_fusion[i][3];
+            float vy = sensor_fusion[i][4];
+            float check_speed = sqrt(pow(vx, 2) + pow(vy, 2)); 
+            float check_car_s = sensor_fusion[i][5];
             
             // If using previous points can project a value out
-            check_car_s += ((double)prev_size * 0.02 * check_speed);
+            check_car_s += (double)prev_size * .02 * check_speed;
             
             // Match units of m/s to be the same as ref_vel
             check_speed *= 2.24;
+
+            int car_lane;
             
-            // State 0 or 1 (going straight)
-            if (state < 2)
+            if (d > 0 && d < 4)
+              car_lane = 0;
+            else if (d > 4 && d < 8)
+              car_lane = 1;
+            else if (d > 8 && d < 12)
+              car_lane = 2;
+            else
+              continue;
+
+            // Check ahead of current car's location
+            if (car_lane == lane)
             {
-              // Car is in my lane
-              if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2))
+              // Check s values greater than mine and s gap
+              if (check_car_s - car_s > 0 && check_car_s - car_s < 30)
               {
-                // Check s values greater than mine and s gap
-                if ((check_car_s > car_s) && ((check_car_s - car_s) < 30))
-                {
-                  // If a car is detected, change to state 1 to match its speed (if not over the speed limit)
-                  state = 1;
-                  front_vel = check_speed;
-                  
-                  // Prepare to switch lanes if the car in front is slow, car isn't already preparing, and the timer is up between lane switches                   
-                  if (check_speed < 47 && state != 2 && waiting == 0)
-                    state = 2;
-                }
+                // If a car is detected, change to state 1 to match its speed (if not over the speed limit)
+                state = 1;
+                in_front = true;
+                front_vel = check_speed;
+                
+                // Prepare to switch lanes if the car in front is slow, car isn't already preparing, and the timer is up between lane switches       
+                if (check_speed < 47 && state != 2 && waiting == 0)
+					state = 2;
               }
             }
-            // State 2 - Preparing to change lanes
-            else
+            // Check left lane of car
+            else if (car_lane + 1 == lane)
             {
-              // Car is in lane to the right
-              if (d < (2 + 4 * (lane + 1) + 2) && d > (2 + 4 * (lane + 1) - 2) && lane < 2)
-              {
-                // Check s values greater than mine and s gap
-                if (fabs(check_car_s - car_s) < 30)
-                  gap_right = false;
-                
-                // Obtain right lane speed
-                if ((check_car_s - car_s >= 30) && (check_car_s - car_s < 60))
-                  right_vel = check_speed;
-              }
-              // Car is in lane to the left
-              if (d < (2 + 4 * (lane - 1) + 2) && d > (2 + 4 * (lane - 1) - 2) && lane > 0)
-              {
-                // Check s values greater than mine and s gap
-                if (fabs(check_car_s - car_s) < 30)
-                  gap_left = false;
-                
-                // Obtain left lane speed
-                if ((check_car_s - car_s >= 30) && (check_car_s - car_s < 60))
+              // Checks values greater than mine and s gap
+              if (abs(car_s + 25) > check_car_s && abs(car_s - 15) < check_car_s)
+                gap_left = false;
+              
+               // Obtain left lane speed
+                if (abs(car_s + 25) < check_car_s && abs(car_s + 50) > check_car_s)
                   left_vel = check_speed;
-              }
-              // Car is in my lane, maintain speed
-              if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2) && (check_car_s > car_s) && ((check_car_s - car_s) < 30))
-              {
-                front_vel = check_speed;
-                in_front = 1;
-              }
+            }
+            // Check right lane of car
+            else if (car_lane - 1 == lane)
+            {
+              // Checks values greater than mine and s gap
+              if (abs(car_s + 25) > check_car_s && abs(car_s - 15) < check_car_s)
+                gap_right = false;
+              
+              // Obtain right lane speed
+              if (abs(car_s + 25) < check_car_s && abs(car_s + 50) > check_car_s)
+                  right_vel = check_speed;
             }
           }
           
@@ -203,16 +200,30 @@ int main() {
           if (waiting > 0)
             waiting--;
           
-          // Finite State Machine
-          switch (state)
+          // Finite State Machine:
+          // State 0 - Accelerating up to top reference speed with no car in front
+          // State 1 - Matching the speed of the car in front (minus 1m/s) to keep distance
+          // State 2 - Preparing + Lane Switching
+          if (state == 0) // Accelerate in empty road
           {
-            // Accelerate in empty road
-            case 0:
+            if (ref_vel < 49.5)
+              ref_vel += 0.224;
+          }
+          else if (state == 1) // Match speed of car in front
+          {
+            // Extra -1 to prevent tailgating
+            if (front_vel - 1 < ref_vel)
+              ref_vel -= 0.224;
+            else
+            {
               if (ref_vel < 49.5)
                 ref_vel += 0.224;
-              break;
-            // Match speed of car in front
-            case 1:
+            }
+          }
+          else if (state == 2) // Preparing to switch lanes
+          {
+            if (in_front)
+            {
               // Extra -1 to prevent tailgating
               if (front_vel - 1 < ref_vel)
                 ref_vel -= 0.224;
@@ -221,52 +232,38 @@ int main() {
                 if (ref_vel < 49.5)
                   ref_vel += 0.224;
               }
-              break;
-            // Preparing to switch lanes
-            case 2:
-              if (in_front)
-              {
-                // Extra -1 to prevent tailgating
-                if (front_vel - 1 < ref_vel)
-                  ref_vel -= 0.224;
-                else
-                {
-                  if (ref_vel < 49.5)
-                  	ref_vel += 0.224;
-                }
-              }
+            }
+            else
+            {
+              if (ref_vel < 49.5)
+                ref_vel += 0.224;
               else
-              {
-                if (ref_vel < 49.5)
-                  ref_vel += 0.224;
-                else
-                  ref_vel -= 0.224;
-              }
-              
-              // Variables to determine if lane changing is safe
-              bool left_turn = lane > 0 && left_vel > front_vel && gap_left;
-              bool right_turn = lane < 2 && right_vel > front_vel && gap_right;
-              
-              // Choose faster lane to switch to
-              if (left_turn && right_turn)
-              {
-                if (left_vel > right_vel)
-                  lane -= 1;
-                else
-                  lane += 1;
-              }
-              else if (right_turn)
-                lane += 1;
-              else if (left_turn)
+                ref_vel -= 0.224;
+            }
+
+            // Variables to determine if lane changing is safe
+            bool left_turn = lane > 0 && left_vel > front_vel && gap_left;
+            bool right_turn = lane < 2 && right_vel > front_vel && gap_right;
+
+            // Choose faster lane to switch to
+            if (left_turn && right_turn)
+            {
+              if (left_vel > right_vel)
                 lane -= 1;
-              
-              // Reset state and waiting counter after lane switch
-              if (left_turn || right_turn)
-              {
-                state = 0;
-                waiting = 100;
-              }
-              break;
+              else
+                lane += 1;
+            }
+            else if (right_turn)
+              lane += 1;
+            else if (left_turn)
+              lane -= 1;
+
+            // Reset state and waiting counter after lane switch
+            if (left_turn || right_turn)
+            {
+              state = 0;
+              waiting = 100;
+            }
           }
           
           // Vectors to store to-be-generated path
